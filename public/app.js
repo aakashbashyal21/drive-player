@@ -1,10 +1,16 @@
-// Drive Player frontend: folder browser, streaming playback, and offline downloads (IndexedDB).
+// Drive Player: static frontend that calls Google Drive directly with a Google access token.
+// Streaming uses the media element + Drive's alt=media. Offline copies live in IndexedDB.
 const $ = (sel) => document.querySelector(sel);
+const DRIVE = 'https://www.googleapis.com/drive/v3';
+const SCOPE = 'https://www.googleapis.com/auth/drive.readonly';
 const FOLDER_MIME = 'application/vnd.google-apps.folder';
 const VIDEO_RE = /\.(mp4|m4v|webm|mov|mkv|avi)$/i;
 const AUDIO_RE = /\.(mp3|m4a|aac|wav|flac|ogg|opus)$/i;
 
 const state = { stack: [{ id: 'root', name: 'My Drive' }], pageToken: null };
+let accessToken = null;
+let tokenExpiresAt = 0;
+let tokenClient = null;
 let offlineIds = new Set();
 let objectUrl = null;
 
@@ -12,7 +18,6 @@ const isFolder = (f) => f.mimeType === FOLDER_MIME;
 const isVideo = (f) => f.mimeType?.startsWith('video/') || VIDEO_RE.test(f.name);
 const isAudio = (f) => f.mimeType?.startsWith('audio/') || AUDIO_RE.test(f.name);
 const isPlayable = (f) => !isFolder(f) && (isVideo(f) || isAudio(f));
-const mediaUrl = (id) => `/api/drive/files/${encodeURIComponent(id)}/media`;
 
 function fmtSize(bytes) {
   if (!bytes) return '';
@@ -33,65 +38,95 @@ function button(label, onClick, cls = 'btn ghost small') {
 
 function setStatus(msg) { $('#status').textContent = msg; }
 
-async function api(path) {
-  const res = await fetch(path, { credentials: 'same-origin' });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw Object.assign(new Error(data.error || `HTTP ${res.status}`), { status: res.status });
+function show(section) {
+  for (const id of ['login', 'browser']) $(`#${id}`).classList.toggle('hidden', id !== section);
+  $('#signOutBtn').classList.toggle('hidden', section !== 'browser');
+}
+
+// ---------- Google sign-in (Identity Services token model, no client secret needed) ----------
+function initAuth() {
+  tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: window.APP_CONFIG.googleClientId,
+    scope: SCOPE,
+    callback: (resp) => {
+      if (resp.error) {
+        $('#loginStatus').textContent = `Google sign-in failed: ${resp.error}`;
+        return;
+      }
+      accessToken = resp.access_token;
+      tokenExpiresAt = Date.now() + Number(resp.expires_in) * 1000;
+      $('#loginStatus').textContent = '';
+      startBrowsing();
+    },
+  });
+}
+
+function signIn() {
+  if (!tokenClient) return ($('#loginStatus').textContent = 'Google sign-in load bhayena. Page refresh garnus.');
+  tokenClient.requestAccessToken({ prompt: '' });
+}
+
+function signOut() {
+  if (accessToken) google.accounts.oauth2.revoke(accessToken, () => {});
+  accessToken = null;
+  tokenExpiresAt = 0;
+  localStorage.removeItem('lastFolder');
+  location.reload();
+}
+
+// Throws a 401 error when the token is missing or about to expire, so the UI asks for sign-in again.
+function token() {
+  if (!accessToken || Date.now() > tokenExpiresAt - 60_000) {
+    accessToken = null;
+    throw Object.assign(new Error('Google session expired, sign in again'), { status: 401 });
+  }
+  return accessToken;
+}
+
+// ---------- Drive API (called straight from the browser) ----------
+async function driveFetch(url) {
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token()}` } });
+  if (res.status === 401) {
+    accessToken = null;
+    throw Object.assign(new Error('Google session expired, sign in again'), { status: 401 });
+  }
+  return res;
+}
+
+async function listFolder(id, pageToken) {
+  const params = new URLSearchParams({
+    q: `'${id}' in parents and trashed = false`,
+    fields: 'nextPageToken,files(id,name,mimeType,size)',
+    orderBy: 'folder,name',
+    pageSize: '200',
+    supportsAllDrives: 'true',
+    includeItemsFromAllDrives: 'true',
+  });
+  if (pageToken) params.set('pageToken', pageToken);
+  const res = await driveFetch(`${DRIVE}/files?${params}`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error?.message || 'Drive error');
   return data;
 }
 
-// ---------- IndexedDB (offline copies) ----------
-const DB_NAME = 'drive-player';
-const STORE = 'downloads';
-
-function dbRun(mode, fn) {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, 1);
-    req.onupgradeneeded = () => req.result.createObjectStore(STORE, { keyPath: 'id' });
-    req.onerror = () => reject(req.error);
-    req.onsuccess = () => {
-      const db = req.result;
-      const tx = db.transaction(STORE, mode);
-      const r = fn(tx.objectStore(STORE));
-      tx.oncomplete = () => { db.close(); resolve(r.result); };
-      tx.onerror = () => { db.close(); reject(tx.error); };
-    };
-  });
+// Drive accepts access_token as a query parameter, so <video>/<audio> can stream
+// with Range requests (seeking works). The token expires after about an hour.
+function mediaSrc(id) {
+  return `${DRIVE}/files/${encodeURIComponent(id)}?alt=media&supportsAllDrives=true&access_token=${encodeURIComponent(token())}`;
 }
-const dbPut = (rec) => dbRun('readwrite', (s) => s.put(rec));
-const dbDelete = (id) => dbRun('readwrite', (s) => s.delete(id));
-const dbAll = () => dbRun('readonly', (s) => s.getAll());
 
 // ---------- Boot and navigation ----------
-function show(section) {
-  for (const id of ['login', 'connect', 'browser']) $(`#${id}`).classList.toggle('hidden', id !== section);
-}
-
-async function boot() {
-  let me;
-  try {
-    me = await api('/api/me');
-  } catch {
-    show('login');
-    return;
-  }
-  if (!me.github) return show('login');
-
-  $('#userName').textContent = `@${me.github.login}`;
-  $('#userbox').classList.remove('hidden');
-  if (!me.googleConnected) return show('connect');
-
+function startBrowsing() {
   show('browser');
-  await renderOffline();
+  renderOffline();
   const saved = localStorage.getItem('lastFolder');
   if (saved) {
-    try { openRoot(JSON.parse(saved)); return; } catch {}
+    try {
+      state.stack = [JSON.parse(saved)];
+      loadPage(true);
+      return;
+    } catch {}
   }
-  await loadPage(true);
-}
-
-function openRoot(folder) {
-  state.stack = [folder];
   loadPage(true);
 }
 
@@ -120,8 +155,7 @@ async function loadPage(reset) {
   renderCrumbs();
   setStatus('Loading...');
   try {
-    const qs = state.pageToken ? `?pageToken=${encodeURIComponent(state.pageToken)}` : '';
-    const data = await api(`/api/drive/folders/${encodeURIComponent(folder.id)}${qs}`);
+    const data = await listFolder(folder.id, state.pageToken);
     for (const f of data.files) $('#files').append(renderItem(f));
     state.pageToken = data.nextPageToken;
     $('#moreBtn').classList.toggle('hidden', !state.pageToken);
@@ -133,7 +167,8 @@ async function loadPage(reset) {
 
 function handleError(err) {
   if (err.status === 401) {
-    show(/Google/.test(err.message) ? 'connect' : 'login');
+    show('login');
+    $('#loginStatus').textContent = err.message;
     return;
   }
   setStatus(err.message);
@@ -162,8 +197,9 @@ function renderItem(f) {
   } else if (isPlayable(f)) {
     actions.append(button('Play', () => play(f)));
     if (offlineIds.has(f.id)) {
-      actions.append(button('Saved', () => {}));
-      actions.lastChild.disabled = true;
+      const saved = button('Saved', () => {});
+      saved.disabled = true;
+      actions.append(saved);
     } else {
       actions.append(button('Download', (e) => download(f, e.currentTarget)));
     }
@@ -172,6 +208,28 @@ function renderItem(f) {
   li.append(info, actions);
   return li;
 }
+
+// ---------- IndexedDB (offline copies) ----------
+const DB_NAME = 'drive-player';
+const STORE = 'downloads';
+
+function dbRun(mode, fn) {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(STORE, { keyPath: 'id' });
+    req.onerror = () => reject(req.error);
+    req.onsuccess = () => {
+      const db = req.result;
+      const tx = db.transaction(STORE, mode);
+      const r = fn(tx.objectStore(STORE));
+      tx.oncomplete = () => { db.close(); resolve(r.result); };
+      tx.onerror = () => { db.close(); reject(tx.error); };
+    };
+  });
+}
+const dbPut = (rec) => dbRun('readwrite', (s) => s.put(rec));
+const dbDelete = (id) => dbRun('readwrite', (s) => s.delete(id));
+const dbAll = () => dbRun('readonly', (s) => s.getAll());
 
 async function renderOffline() {
   const list = (await dbAll()).sort((a, b) => b.savedAt - a.savedAt);
@@ -200,7 +258,7 @@ async function renderOffline() {
       button('Delete', async () => {
         await dbDelete(r.id);
         await renderOffline();
-        renderCurrentPageButtons();
+        refreshVisibleButtons();
       }),
     );
     li.append(info, actions);
@@ -208,12 +266,10 @@ async function renderOffline() {
   }
 }
 
-// Refreshes the Play/Download/Saved buttons on the visible list after offline changes.
-function renderCurrentPageButtons() {
-  const items = [...$('#files').children];
-  const files = items.map((li) => li._file).filter(Boolean);
-  if (!files.length) return;
-  $('#files').replaceChildren(...files.map(renderItem));
+// Re-renders the visible list so Play/Download/Saved buttons match the offline store.
+function refreshVisibleButtons() {
+  const files = [...$('#files').children].map((li) => li._file).filter(Boolean);
+  if (files.length) $('#files').replaceChildren(...files.map(renderItem));
 }
 
 // ---------- Playback ----------
@@ -230,11 +286,15 @@ function play(file, blob) {
   other.load();
   other.hidden = true;
 
-  if (blob) {
-    objectUrl = URL.createObjectURL(blob);
-    el.src = objectUrl;
-  } else {
-    el.src = mediaUrl(file.id); // Range requests are handled by the server, so seeking works
+  try {
+    if (blob) {
+      objectUrl = URL.createObjectURL(blob);
+      el.src = objectUrl;
+    } else {
+      el.src = mediaSrc(file.id);
+    }
+  } catch (err) {
+    return handleError(err);
   }
   el.hidden = false;
 
@@ -265,7 +325,7 @@ async function download(f, btn) {
   btn.disabled = true;
   btn.textContent = '0%';
   try {
-    const res = await fetch(mediaUrl(f.id), { credentials: 'same-origin' });
+    const res = await driveFetch(`${DRIVE}/files/${encodeURIComponent(f.id)}?alt=media&supportsAllDrives=true`);
     if (!res.ok) throw new Error(`Download failed (HTTP ${res.status})`);
 
     const total = Number(res.headers.get('content-length')) || Number(f.size) || 0;
@@ -284,24 +344,15 @@ async function download(f, btn) {
     const blob = new Blob(chunks, { type });
     await dbPut({ id: f.id, name: f.name, mimeType: type, size: blob.size, savedAt: Date.now(), blob });
     await renderOffline();
-    renderCurrentPageButtons();
+    refreshVisibleButtons();
   } catch (err) {
     btn.disabled = false;
     btn.textContent = 'Retry';
-    setStatus(err.message);
+    handleError(err);
   }
 }
 
 // ---------- Events ----------
-$('#folderForm').addEventListener('submit', (e) => {
-  e.preventDefault();
-  const id = parseFolderId($('#folderInput').value);
-  if (!id) return setStatus('Folder link ya ID milena.');
-  const folder = { id, name: 'Shared folder' };
-  localStorage.setItem('lastFolder', JSON.stringify(folder));
-  openRoot(folder);
-});
-
 function parseFolderId(input) {
   const v = input.trim();
   if (v === 'root') return v;
@@ -310,13 +361,28 @@ function parseFolderId(input) {
   return /^[\w-]{10,}$/.test(v) ? v : null;
 }
 
+$('#folderForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const id = parseFolderId($('#folderInput').value);
+  if (!id) return setStatus('Folder link ya ID milena.');
+  const folder = { id, name: 'Shared folder' };
+  localStorage.setItem('lastFolder', JSON.stringify(folder));
+  state.stack = [folder];
+  loadPage(true);
+});
+
+$('#signInBtn').addEventListener('click', signIn);
+$('#signOutBtn').addEventListener('click', signOut);
 $('#moreBtn').addEventListener('click', () => loadPage(false));
 $('#backBtn').addEventListener('click', goBack);
 $('#closePlayer').addEventListener('click', closePlayer);
-$('#logoutBtn').addEventListener('click', async () => {
-  await fetch('/auth/logout', { method: 'POST', credentials: 'same-origin' });
-  localStorage.removeItem('lastFolder');
-  location.reload();
-});
 
-boot();
+// Google's script loads async, so wait for it before creating the token client.
+window.addEventListener('load', () => {
+  if (!window.google?.accounts) {
+    $('#loginStatus').textContent = 'Google sign-in script load bhayena. Internet check garnus.';
+    return;
+  }
+  initAuth();
+});
+show('login');

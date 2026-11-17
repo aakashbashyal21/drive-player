@@ -1,41 +1,41 @@
 # Drive Player
 
-Login with GitHub, open a Google Drive folder, then **stream** audio/video or **download** it for offline playback. No npm packages: plain Node.js (18+) backend and vanilla HTML/CSS/JS frontend.
+Sign in with Google, open a Google Drive folder, then **stream** audio/video or **download** it for offline playback on your phone or computer.
+
+It is a static site: plain HTML, CSS and JavaScript. The browser calls the Google Drive API directly, so there is no backend and no secret to keep.
 
 ## Setup
 
-### 1. GitHub OAuth app
-1. GitHub → Settings → Developer settings → OAuth Apps → **New OAuth App**
-2. Homepage URL: `http://localhost:3000`
-3. Authorization callback URL: `http://localhost:3000/auth/github/callback`
-4. Copy the Client ID and generate a Client Secret.
-
-### 2. Google OAuth client
+### 1. Google OAuth client ID
 1. Google Cloud Console → create a project → enable **Google Drive API**.
-2. OAuth consent screen → External → add your own Google account as a **test user**.
-3. Credentials → Create credentials → **OAuth client ID** → Web application.
-4. Authorized redirect URI: `http://localhost:3000/auth/google/callback`
-5. Copy the Client ID and Client Secret.
+2. OAuth consent screen → External → add your Google account as a **test user** (while the app is in Testing mode).
+3. Credentials → Create credentials → **OAuth client ID** → type **Web application**.
+4. Under **Authorized JavaScript origins**, add:
+   - `http://localhost:8080` (local testing)
+   - your site origin, e.g. `https://<your-github-username>.github.io`
+   
+   Origins have no path, so do not include `/drive-player`.
+5. Copy the client ID into [public/config.js](public/config.js).
 
-### 3. Configure and run
+### 2. Run locally
 ```bash
-cp .env.example .env   # fill in the values
-npm start
+cd public
+python -m http.server 8080
 ```
-Open http://localhost:3000.
+Open http://localhost:8080. (Any static server works.)
+
+### 3. Host on GitHub Pages
+1. Repo → Settings → Pages → Deploy from branch → `main` / `/ (root)`. Pages serves from `public/` only if you move the files to the root or set the source folder to `/public` in your hosting setup.
+2. GitHub Pages on a **private** repo needs a paid GitHub plan. Make the repo public, or host elsewhere (Netlify, Cloudflare Pages). The code has no secrets, so public is fine.
 
 ## Using it
-- Log in with GitHub, then connect Google Drive (read-only).
-- Paste a Drive folder link or ID. Folders open on tap; **Play** streams the file.
-- **Download** saves the file to the browser's IndexedDB. Downloaded files appear under *Offline* and play without a network connection.
-
-## Phone access
-`localhost` is not reachable from a phone. Either:
-- deploy it somewhere with HTTPS (Render, Railway, Fly.io, a VPS), set `BASE_URL` to that URL, and update both OAuth callback URLs; or
-- expose your local server with a tunnel (e.g. `cloudflared tunnel --url http://localhost:3000`) and use that URL as `BASE_URL` in the same way.
+- Sign in with Google (read-only access to Drive).
+- Paste a folder link or ID. Tap a folder to open it.
+- **Play** streams the file. **Download** saves it to the browser's IndexedDB, and it then appears under *Offline*.
 
 ## Notes and limits
-- Sessions are in memory: restarting the server means logging in again.
-- Downloads are held in memory while they are being fetched, so very large files (multiple GB) may fail on phones with little RAM.
-- Browsers play MP4/WebM/MP3 well; MKV and some codecs may not play in every browser.
-- `drive.readonly` is a restricted scope. While the Google app is in *Testing* mode, only listed test users can log in.
+- Sign-in lasts about an hour. When it expires, sign in again.
+- Google's `drive.readonly` scope is restricted. Until the app is verified, only test users can sign in.
+- Streaming puts the short-lived access token in the media URL, so the token can show up in browser history. It expires after an hour.
+- Downloads are held in memory while they are fetched, so very large files may fail on phones with little RAM.
+- Browsers play MP4/WebM/MP3 best. MKV and some codecs may not play.
