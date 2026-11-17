@@ -1,0 +1,15 @@
+{
+  "name": "drive-player",
+  "version": "1.0.0",
+  "private": true,
+  "description": "GitHub login + Google Drive folder browser with streaming and offline playback",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "UNLICENSED"
+}

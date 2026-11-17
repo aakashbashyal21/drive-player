@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <title>Drive Player</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <strong>Drive Player</strong>
+    <div id="userbox" class="userbox hidden">
+      <span id="userName"></span>
+      <button id="logoutBtn" class="btn ghost small">Logout</button>
+    </div>
+  </header>
+
+  <main>
+    <section id="login" class="card center hidden">
+      <h1>Welcome</h1>
+      <p class="muted">GitHub le login garera Google Drive folder herna sakinchha.</p>
+      <a class="btn primary" href="/auth/github">Login with GitHub</a>
+    </section>
+
+    <section id="connect" class="card center hidden">
+      <h2>Connect Google Drive</h2>
+      <p class="muted">Read-only access matra mangchha.</p>
+      <a class="btn primary" href="/auth/google">Connect Google Drive</a>
+    </section>
+
+    <section id="browser" class="hidden">
+      <form id="folderForm" class="card row">
+        <input id="folderInput" placeholder="Drive folder link or ID" autocomplete="off" inputmode="url">
+        <button class="btn primary">Open</button>
+      </form>
+
+      <div class="card">
+        <div class="crumbs">
+          <button id="backBtn" class="btn ghost small" hidden>Back</button>
+          <span id="crumbs" class="muted"></span>
+        </div>
+        <ul id="files" class="list"></ul>
+        <button id="moreBtn" class="btn ghost hidden">Load more</button>
+        <p id="status" class="muted"></p>
+      </div>
+
+      <div class="card">
+        <h2>Offline</h2>
+        <ul id="offline" class="list"></ul>
+        <p id="offlineEmpty" class="muted">Download gareko file yaha dekhincha.</p>
+      </div>
+    </section>
+  </main>
+
+  <div id="player" class="player hidden">
+    <div class="player-head">
+      <span id="nowName"></span>
+      <button id="closePlayer" class="btn ghost small" aria-label="Close player">Close</button>
+    </div>
+    <video id="video" controls playsinline hidden></video>
+    <audio id="audio" controls hidden></audio>
+    <div id="playerSource" class="muted small"></div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
