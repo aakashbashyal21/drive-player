@@ -1,16 +1,14 @@
-// Drive Player: static frontend that calls Google Drive directly with a Google access token.
-// Streaming uses the media element + Drive's alt=media. Offline copies live in IndexedDB.
+// Drive Player: static site that reads publicly shared Google Drive folders with an API key.
+// Streaming uses the media element + Drive's alt=media (Range requests, so seeking works).
+// Offline copies live in IndexedDB.
 const $ = (sel) => document.querySelector(sel);
 const DRIVE = 'https://www.googleapis.com/drive/v3';
-const SCOPE = 'https://www.googleapis.com/auth/drive.readonly';
+const KEY = window.APP_CONFIG.googleApiKey;
 const FOLDER_MIME = 'application/vnd.google-apps.folder';
 const VIDEO_RE = /\.(mp4|m4v|webm|mov|mkv|avi)$/i;
 const AUDIO_RE = /\.(mp3|m4a|aac|wav|flac|ogg|opus)$/i;
 
-const state = { stack: [{ id: 'root', name: 'My Drive' }], pageToken: null };
-let accessToken = null;
-let tokenExpiresAt = 0;
-let tokenClient = null;
+const state = { stack: [], pageToken: null };
 let offlineIds = new Set();
 let objectUrl = null;
 
@@ -38,63 +36,27 @@ function button(label, onClick, cls = 'btn ghost small') {
 
 function setStatus(msg) { $('#status').textContent = msg; }
 
-function show(section) {
-  for (const id of ['login', 'browser']) $(`#${id}`).classList.toggle('hidden', id !== section);
-  $('#signOutBtn').classList.toggle('hidden', section !== 'browser');
+// ---------- Drive API (API key, no sign-in) ----------
+const PRIVATE_MSG = 'Ei link public chhaina. Drive ma "Anyone with the link" set garnus.';
+
+function handleError(err) {
+  setStatus(err.message);
 }
 
-// ---------- Google sign-in (Identity Services token model, no client secret needed) ----------
-function initAuth() {
-  tokenClient = google.accounts.oauth2.initTokenClient({
-    client_id: window.APP_CONFIG.googleClientId,
-    scope: SCOPE,
-    callback: (resp) => {
-      if (resp.error) {
-        $('#loginStatus').textContent = `Google sign-in failed: ${resp.error}`;
-        return;
-      }
-      accessToken = resp.access_token;
-      tokenExpiresAt = Date.now() + Number(resp.expires_in) * 1000;
-      $('#loginStatus').textContent = '';
-      startBrowsing();
-    },
-  });
-}
-
-function signIn() {
-  if (!tokenClient) return ($('#loginStatus').textContent = 'Google sign-in load bhayena. Page refresh garnus.');
-  tokenClient.requestAccessToken({ prompt: '' });
-}
-
-function signOut() {
-  if (accessToken) google.accounts.oauth2.revoke(accessToken, () => {});
-  accessToken = null;
-  tokenExpiresAt = 0;
-  localStorage.removeItem('lastFolder');
-  location.reload();
-}
-
-// Throws a 401 error when the token is missing or about to expire, so the UI asks for sign-in again.
-function token() {
-  if (!accessToken || Date.now() > tokenExpiresAt - 60_000) {
-    accessToken = null;
-    throw Object.assign(new Error('Google session expired, sign in again'), { status: 401 });
-  }
-  return accessToken;
-}
-
-// ---------- Drive API (called straight from the browser) ----------
-async function driveFetch(url) {
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${token()}` } });
-  if (res.status === 401) {
-    accessToken = null;
-    throw Object.assign(new Error('Google session expired, sign in again'), { status: 401 });
+// Drive returns 403/404 for files that are not publicly shared, so show a clear hint.
+async function driveGet(url) {
+  const res = await fetch(url);
+  if (res.status === 403 || res.status === 404) throw new Error(PRIVATE_MSG);
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error?.message || `Drive error (HTTP ${res.status})`);
   }
   return res;
 }
 
 async function listFolder(id, pageToken) {
   const params = new URLSearchParams({
+    key: KEY,
     q: `'${id}' in parents and trashed = false`,
     fields: 'nextPageToken,files(id,name,mimeType,size)',
     orderBy: 'folder,name',
@@ -103,31 +65,18 @@ async function listFolder(id, pageToken) {
     includeItemsFromAllDrives: 'true',
   });
   if (pageToken) params.set('pageToken', pageToken);
-  const res = await driveFetch(`${DRIVE}/files?${params}`);
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error?.message || 'Drive error');
-  return data;
+  const res = await driveGet(`${DRIVE}/files?${params}`);
+  return res.json();
 }
 
-// Drive accepts access_token as a query parameter, so <video>/<audio> can stream
-// with Range requests (seeking works). The token expires after about an hour.
 function mediaSrc(id) {
-  return `${DRIVE}/files/${encodeURIComponent(id)}?alt=media&supportsAllDrives=true&access_token=${encodeURIComponent(token())}`;
+  return `${DRIVE}/files/${encodeURIComponent(id)}?alt=media&supportsAllDrives=true&key=${encodeURIComponent(KEY)}`;
 }
 
-// ---------- Boot and navigation ----------
-function startBrowsing() {
-  show('browser');
-  renderOffline();
-  const saved = localStorage.getItem('lastFolder');
-  if (saved) {
-    try {
-      state.stack = [JSON.parse(saved)];
-      loadPage(true);
-      return;
-    } catch {}
-  }
-  loadPage(true);
+// ---------- Navigation ----------
+async function openRoot(folder) {
+  state.stack = [folder];
+  await loadPage(true);
 }
 
 async function openFolder(folder) {
@@ -157,21 +106,12 @@ async function loadPage(reset) {
   try {
     const data = await listFolder(folder.id, state.pageToken);
     for (const f of data.files) $('#files').append(renderItem(f));
-    state.pageToken = data.nextPageToken;
+    state.pageToken = data.nextPageToken || null;
     $('#moreBtn').classList.toggle('hidden', !state.pageToken);
     setStatus($('#files').children.length ? '' : 'This folder is empty.');
   } catch (err) {
     handleError(err);
   }
-}
-
-function handleError(err) {
-  if (err.status === 401) {
-    show('login');
-    $('#loginStatus').textContent = err.message;
-    return;
-  }
-  setStatus(err.message);
 }
 
 // ---------- Rendering ----------
@@ -286,15 +226,11 @@ function play(file, blob) {
   other.load();
   other.hidden = true;
 
-  try {
-    if (blob) {
-      objectUrl = URL.createObjectURL(blob);
-      el.src = objectUrl;
-    } else {
-      el.src = mediaSrc(file.id);
-    }
-  } catch (err) {
-    return handleError(err);
+  if (blob) {
+    objectUrl = URL.createObjectURL(blob);
+    el.src = objectUrl;
+  } else {
+    el.src = mediaSrc(file.id);
   }
   el.hidden = false;
 
@@ -325,8 +261,7 @@ async function download(f, btn) {
   btn.disabled = true;
   btn.textContent = '0%';
   try {
-    const res = await driveFetch(`${DRIVE}/files/${encodeURIComponent(f.id)}?alt=media&supportsAllDrives=true`);
-    if (!res.ok) throw new Error(`Download failed (HTTP ${res.status})`);
+    const res = await driveGet(`${DRIVE}/files/${encodeURIComponent(f.id)}?alt=media&supportsAllDrives=true&key=${encodeURIComponent(KEY)}`);
 
     const total = Number(res.headers.get('content-length')) || Number(f.size) || 0;
     const reader = res.body.getReader();
@@ -355,7 +290,6 @@ async function download(f, btn) {
 // ---------- Events ----------
 function parseFolderId(input) {
   const v = input.trim();
-  if (v === 'root') return v;
   const m = v.match(/folders\/([\w-]+)/) || v.match(/[?&]id=([\w-]+)/);
   if (m) return m[1];
   return /^[\w-]{10,}$/.test(v) ? v : null;
@@ -367,22 +301,22 @@ $('#folderForm').addEventListener('submit', (e) => {
   if (!id) return setStatus('Folder link ya ID milena.');
   const folder = { id, name: 'Shared folder' };
   localStorage.setItem('lastFolder', JSON.stringify(folder));
-  state.stack = [folder];
-  loadPage(true);
+  openRoot(folder);
 });
 
-$('#signInBtn').addEventListener('click', signIn);
-$('#signOutBtn').addEventListener('click', signOut);
 $('#moreBtn').addEventListener('click', () => loadPage(false));
 $('#backBtn').addEventListener('click', goBack);
 $('#closePlayer').addEventListener('click', closePlayer);
 
-// Google's script loads async, so wait for it before creating the token client.
-window.addEventListener('load', () => {
-  if (!window.google?.accounts) {
-    $('#loginStatus').textContent = 'Google sign-in script load bhayena. Internet check garnus.';
+// Start: reopen the last folder if there is one, and show offline copies.
+(function boot() {
+  if (!KEY || KEY.startsWith('YOUR_')) {
+    setStatus('docs/config.js ma Google API key set garnus.');
     return;
   }
-  initAuth();
-});
-show('login');
+  renderOffline();
+  try {
+    const saved = JSON.parse(localStorage.getItem('lastFolder') || 'null');
+    if (saved) openRoot(saved);
+  } catch {}
+})();

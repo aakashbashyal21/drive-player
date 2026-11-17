@@ -1,7 +1,6 @@
-// Public settings only. A Google OAuth client ID is not a secret, so it is safe to commit.
+// Public settings only. A browser API key is visible to visitors, so restrict it (see README).
 window.APP_CONFIG = {
-  // Google Cloud Console → Credentials → OAuth client ID (Web application).
-  // Add your site origin under "Authorized JavaScript origins", e.g. https://<user>.github.io
-  // and http://localhost:8080 for local testing.
-  googleClientId: 'YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com',
+  // Google Cloud Console → Credentials → API key. Enable "Google Drive API" for the project,
+  // then restrict the key: Application restrictions → HTTP referrers → https://aakashbashyal21.github.io/*
+  googleApiKey: 'YOUR_GOOGLE_API_KEY',
 };

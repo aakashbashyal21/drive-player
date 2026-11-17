@@ -6,44 +6,36 @@
   <meta name="color-scheme" content="dark">
   <title>Drive Player</title>
   <link rel="stylesheet" href="style.css">
-  <script src="https://accounts.google.com/gsi/client" async defer></script>
   <script src="config.js"></script>
 </head>
 <body>
   <header class="topbar">
     <strong>Drive Player</strong>
-    <button id="signOutBtn" class="btn ghost small hidden">Sign out</button>
   </header>
 
   <main>
-    <section id="login" class="card center hidden">
-      <h1>Welcome</h1>
-      <p class="muted">Google Drive folder browse garera stream ya offline download garnus.</p>
-      <button id="signInBtn" class="btn primary">Sign in with Google</button>
-      <p id="loginStatus" class="muted small"></p>
-    </section>
-
-    <section id="browser" class="hidden">
-      <form id="folderForm" class="card row">
-        <input id="folderInput" placeholder="Drive folder link or ID" autocomplete="off" inputmode="url">
+    <section class="card">
+      <form id="folderForm" class="row">
+        <input id="folderInput" placeholder="Public Google Drive folder link" autocomplete="off" inputmode="url">
         <button class="btn primary">Open</button>
       </form>
+      <p class="muted small">Folder ya file "Anyone with the link" bhayeko huna parchha.</p>
+    </section>
 
-      <div class="card">
-        <div class="crumbs">
-          <button id="backBtn" class="btn ghost small" hidden>Back</button>
-          <span id="crumbs" class="muted"></span>
-        </div>
-        <ul id="files" class="list"></ul>
-        <button id="moreBtn" class="btn ghost hidden">Load more</button>
-        <p id="status" class="muted"></p>
+    <section class="card">
+      <div class="crumbs">
+        <button id="backBtn" class="btn ghost small" hidden>Back</button>
+        <span id="crumbs" class="muted"></span>
       </div>
+      <ul id="files" class="list"></ul>
+      <button id="moreBtn" class="btn ghost hidden">Load more</button>
+      <p id="status" class="muted"></p>
+    </section>
 
-      <div class="card">
-        <h2>Offline</h2>
-        <ul id="offline" class="list"></ul>
-        <p id="offlineEmpty" class="muted">Download gareko file yaha dekhincha.</p>
-      </div>
+    <section class="card">
+      <h2>Offline</h2>
+      <ul id="offline" class="list"></ul>
+      <p id="offlineEmpty" class="muted">Download gareko file yaha dekhincha.</p>
     </section>
   </main>
 
