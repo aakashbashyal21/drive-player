@@ -15,18 +15,19 @@ It is a static site: plain HTML, CSS and JavaScript. The browser calls the Googl
    - your site origin, e.g. `https://<your-github-username>.github.io`
    
    Origins have no path, so do not include `/drive-player`.
-5. Copy the client ID into [public/config.js](public/config.js).
+5. Copy the client ID into [docs/config.js](docs/config.js).
 
 ### 2. Run locally
 ```bash
-cd public
+cd docs
 python -m http.server 8080
 ```
 Open http://localhost:8080. (Any static server works.)
 
 ### 3. Host on GitHub Pages
-1. Repo → Settings → Pages → Deploy from branch → `main` / `/ (root)`. Pages serves from `public/` only if you move the files to the root or set the source folder to `/public` in your hosting setup.
-2. GitHub Pages on a **private** repo needs a paid GitHub plan. Make the repo public, or host elsewhere (Netlify, Cloudflare Pages). The code has no secrets, so public is fine.
+1. Repo → Settings → Pages → Deploy from branch → `main` / `/docs`.
+2. The site appears at `https://<your-github-username>.github.io/drive-player/`.
+3. GitHub Pages on a **private** repo needs a paid GitHub plan. Make the repo public, or host elsewhere (Netlify, Cloudflare Pages). The code has no secrets, so public is fine.
 
 ## Using it
 - Sign in with Google (read-only access to Drive).
